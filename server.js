@@ -12,6 +12,22 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// ==========================================
+// GEMINI MULTI-USER CHAT MEMORY (बिना किसी बाहरी पैकेज के)
+// ==========================================
+// हर यूजर और उनके कस्टमर की पिछली बातचीत याद रखने के लिए
+const chatHistories = {};
+
+// 15 मिनट से पुराने सेशन को अपने आप मिटाने के लिए टाइमर
+setInterval(() => {
+    const now = Date.now();
+    for (const key in chatHistories) {
+        if (now - chatHistories[key].lastActive > 15 * 60 * 1000) {
+            delete chatHistories[key];
+        }
+    }
+}, 5 * 60 * 1000);
+
 // डेटाबेस फ़ाइल लोड / इनिशियलाइज़ करना
 function getPayments() {
     if (!fs.existsSync(DB_FILE)) {
@@ -26,7 +42,7 @@ function savePayments(payments) {
 }
 
 // ==========================================
-// 0. NAYA: App Update & UPI Config API (Version 1.0.1)
+// 0. App Update & UPI Config API
 // ==========================================
 app.get('/api/app/check-update', (req, res) => {
     res.json({
@@ -47,8 +63,92 @@ app.get('/api/payment/config', (req, res) => {
 });
 
 // ==========================================
+// NAYA: Gemini AI Chat API (बिना किसी NPM पैकेज के - Direct REST API)
+// ==========================================
+app.post('/api/ai/chat', async (req, res) => {
+    try {
+        const { apiKey, userPhone, customerPhone, message, businessPrompt } = req.body;
+
+        if (!apiKey) {
+            return res.status(400).json({ success: false, message: "Gemini API Key अनिवार्य है।" });
+        }
+        if (!message) {
+            return res.status(400).json({ success: false, message: "Message अनिवार्य है।" });
+        }
+
+        const sessionUser = userPhone || 'default_user';
+        const sessionCustomer = customerPhone || req.ip;
+        const sessionKey = `${sessionUser}_${sessionCustomer}`;
+
+        const defaultPrompt = `आप WhatsApp बिज़नेस असिस्टेंट हैं। 
+नियम:
+1. जब कस्टमर पहली बार नमस्ते या हाय बोले, तब वेलकम मैसेज और ऑप्शन्स (1, 2) दें।
+2. जब कस्टमर विकल्प चुनें (जैसे '1', '2', 'Cab', या गाड़ी का नाम), तो दोबारा वेलकम मैसेज कभी न दोहराएं।
+3. सीधे उस विकल्प से जुड़ी सटीक जानकारी दें।`;
+
+        // अगर इस कस्टमर की कोई हिस्ट्री नहीं है, तो नया एरे बनाएं
+        if (!chatHistories[sessionKey]) {
+            chatHistories[sessionKey] = {
+                history: [],
+                lastActive: Date.now()
+            };
+        }
+
+        const userSession = chatHistories[sessionKey];
+        userSession.lastActive = Date.now();
+
+        // नया यूज़र मैसेज हिस्ट्री में जोड़ें
+        userSession.history.push({
+            role: "user",
+            parts: [{ text: message.trim() }]
+        });
+
+        // Gemini REST API को डायरेक्ट कॉल (कोई नया पैकेज नहीं चाहिए)
+        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey.trim()}`;
+
+        const payload = {
+            systemInstruction: {
+                parts: [{ text: businessPrompt || defaultPrompt }]
+            },
+            contents: userSession.history
+        };
+
+        const response = await fetch(geminiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        const data = await response.json();
+
+        if (data.error) {
+            throw new Error(data.error.message || "Gemini API Error");
+        }
+
+        const botReply = data.candidates?.[0]?.content?.parts?.[0]?.text || "माफ़ कीजिए, मुझे समझ नहीं आया।";
+
+        // AI के जवाब को भी हिस्ट्री में जोड़ें ताकि अगली बार उसे याद रहे
+        userSession.history.push({
+            role: "model",
+            parts: [{ text: botReply }]
+        });
+
+        res.json({
+            success: true,
+            reply: botReply
+        });
+
+    } catch (error) {
+        console.error("[Gemini Chat Error]:", error);
+        res.status(500).json({
+            success: false,
+            message: "AI जवाब देने में समस्या: " + (error.message || error)
+        });
+    }
+});
+
+// ==========================================
 // 1. Android App API: UTR सबमिट करना
-// (submit-utr aur submit dono handle honge)
 // ==========================================
 const handlePaymentSubmit = (req, res) => {
     const { utr, planTier, amount, userPhone, userName, phone, name } = req.body;
@@ -66,7 +166,6 @@ const handlePaymentSubmit = (req, res) => {
 
     const payments = getPayments();
 
-    // चेक करें कि यह UTR पहले से तो नहीं है
     const existing = payments.find(p => p.utr.toLowerCase() === actualUtr.toLowerCase());
     if (existing) {
         return res.json({
@@ -83,7 +182,7 @@ const handlePaymentSubmit = (req, res) => {
         amount: amount || (planTier === 'PRO_399' ? 399 : 299),
         userPhone: actualPhone,
         userName: actualName,
-        status: 'PENDING',        // PENDING, APPROVED, REJECTED
+        status: 'PENDING',
         createdAt: new Date().toISOString(),
         approvedAt: null
     };
@@ -122,7 +221,7 @@ app.get('/api/payment/status/:utr', (req, res) => {
         success: true,
         utr: payment.utr,
         planTier: payment.planTier,
-        status: payment.status, // 'PENDING' | 'APPROVED' | 'REJECTED'
+        status: payment.status,
         isApproved: payment.status === 'APPROVED'
     });
 });
@@ -145,7 +244,7 @@ app.post('/api/admin/update-status', (req, res) => {
         return res.status(404).json({ success: false, message: "रिकॉर्ड नहीं मिला।" });
     }
 
-    payment.status = status; // 'APPROVED' या 'REJECTED'
+    payment.status = status;
     if (status === 'APPROVED') {
         payment.approvedAt = new Date().toISOString();
     }
@@ -273,5 +372,6 @@ app.listen(PORT, () => {
     console.log(`🌐 Admin Panel: http://localhost:${PORT}/admin`);
     console.log(`🔄 Version Check: http://localhost:${PORT}/api/app/check-update (v1.0.1)`);
     console.log(`📲 API Submit: POST http://localhost:${PORT}/api/payment/submit-utr`);
+    console.log(`🤖 AI Chat Webhook: POST http://localhost:${PORT}/api/ai/chat`);
     console.log(`===================================================`);
 });
