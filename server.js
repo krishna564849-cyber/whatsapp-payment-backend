@@ -18,8 +18,12 @@ function getPayments() {
     if (!fs.existsSync(DB_FILE)) {
         fs.writeFileSync(DB_FILE, JSON.stringify([]));
     }
-    const data = fs.readFileSync(DB_FILE, 'utf8');
-    return JSON.parse(data || '[]');
+    try {
+        const data = fs.readFileSync(DB_FILE, 'utf8');
+        return JSON.parse(data || '[]');
+    } catch (e) {
+        return [];
+    }
 }
 
 function savePayments(payments) {
@@ -27,7 +31,7 @@ function savePayments(payments) {
 }
 
 // ==========================================
-// 🚀 Gemini 3.6 Flash API Caller
+// 🚀 Gemini 3.6 Flash API Engine
 // ==========================================
 function callGemini36Flash(apiKey, promptText = "Hello") {
     return new Promise((resolve, reject) => {
@@ -79,7 +83,9 @@ function callGemini36Flash(apiKey, promptText = "Hello") {
     });
 }
 
-// Android App Test Routes (API Key Verification)
+// ==========================================
+// 🤖 AI Test & Verification Endpoints
+// ==========================================
 const handleGeminiTest = async (req, res) => {
     const apiKey = req.body.apiKey || req.body.api_key || req.body.key || req.query.apiKey;
 
@@ -106,20 +112,19 @@ const handleGeminiTest = async (req, res) => {
     }
 };
 
-// All Compatible Test Routes
 app.post('/api/ai/test', handleGeminiTest);
 app.post('/api/ai/test-key', handleGeminiTest);
 app.post('/api/gemini/test', handleGeminiTest);
 app.post('/api/test-key', handleGeminiTest);
 app.get('/api/ai/test', handleGeminiTest);
 
-// Gemini Chat Route (WhatsApp Auto Reply)
+// WhatsApp Auto-Reply Chat Route
 app.post('/api/ai/chat', async (req, res) => {
     const { apiKey, message, prompt } = req.body;
     const finalPrompt = message || prompt;
 
     if (!apiKey || !finalPrompt) {
-        return res.status(400).json({ success: false, message: "API Key aur message dono jaruri hain." });
+        return res.status(400).json({ success: false, message: "API Key aur message dono anivarya hain." });
     }
 
     try {
@@ -135,7 +140,7 @@ app.post('/api/ai/chat', async (req, res) => {
 });
 
 // ==========================================
-// 0. App Update & UPI Config API
+// 📲 App Update & Payment Config
 // ==========================================
 app.get('/api/app/check-update', (req, res) => {
     res.json({
@@ -156,7 +161,7 @@ app.get('/api/payment/config', (req, res) => {
 });
 
 // ==========================================
-// 1. Android App API: UTR Submit
+// 💳 Payment UTR Submit
 // ==========================================
 const handlePaymentSubmit = (req, res) => {
     const { utr, planTier, amount, userPhone, userName, phone, name } = req.body;
@@ -205,7 +210,7 @@ app.post('/api/payment/submit-utr', handlePaymentSubmit);
 app.post('/api/payment/submit', handlePaymentSubmit);
 
 // ==========================================
-// 2. Android App API: Status Check
+// 🔍 Payment Status Check
 // ==========================================
 app.get('/api/payment/status/:utr', (req, res) => {
     const { utr } = req.params;
@@ -226,7 +231,7 @@ app.get('/api/payment/status/:utr', (req, res) => {
 });
 
 // ==========================================
-// 3. Admin API: Update Status
+// 🛡️ Admin APIs
 // ==========================================
 app.post('/api/admin/update-status', (req, res) => {
     const { utr, status, adminKey } = req.body;
@@ -252,9 +257,6 @@ app.post('/api/admin/update-status', (req, res) => {
     res.json({ success: true, message: `UTR ${utr} ko ${status} kar diya gaya.`, payment });
 });
 
-// ==========================================
-// 4. Admin API: Get All Payments
-// ==========================================
 app.get('/api/admin/payments', (req, res) => {
     const adminKey = req.query.adminKey || req.headers['x-admin-key'];
     const SECRET_KEY = process.env.ADMIN_KEY || 'myAdminSecret123';
@@ -268,31 +270,34 @@ app.get('/api/admin/payments', (req, res) => {
 });
 
 // ==========================================
-// 5. Admin Web Dashboard
+// 📊 Beautiful Web Admin Dashboard
 // ==========================================
 app.get('/admin', (req, res) => {
     const payments = getPayments().reverse();
 
     const rows = payments.map(p => `
-        <tr style="border-bottom: 1px solid #ddd; text-align: center;">
-            <td style="padding: 12px;"><b>${p.utr}</b></td>
-            <td style="padding: 12px;">${p.userName}<br><small>${p.userPhone}</small></td>
-            <td style="padding: 12px;">₹${p.amount} (${p.planTier})</td>
-            <td style="padding: 12px;"><small>${new Date(p.createdAt).toLocaleString('en-IN')}</small></td>
-            <td style="padding: 12px;">
+        <tr style="border-bottom: 1px solid #e2e8f0; text-align: center;">
+            <td style="padding: 14px; font-family: monospace; font-weight: bold; color: #1e293b;">${p.utr}</td>
+            <td style="padding: 14px; text-align: left;">
+                <b>${p.userName}</b><br>
+                <span style="color: #64748b; font-size: 13px;">📞 ${p.userPhone}</span>
+            </td>
+            <td style="padding: 14px; font-weight: 600; color: #0f172a;">₹${p.amount} <br><small style="color: #0284c7;">(${p.planTier})</small></td>
+            <td style="padding: 14px; color: #64748b; font-size: 13px;">${new Date(p.createdAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}</td>
+            <td style="padding: 14px;">
                 <span style="
-                    padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: bold;
-                    background: ${p.status === 'APPROVED' ? '#d4edda' : p.status === 'REJECTED' ? '#f8d7da' : '#fff3cd'};
-                    color: ${p.status === 'APPROVED' ? '#155724' : p.status === 'REJECTED' ? '#721c24' : '#856404'};
+                    padding: 6px 14px; border-radius: 20px; font-size: 12px; font-weight: bold; display: inline-block;
+                    background: ${p.status === 'APPROVED' ? '#dcfce7' : p.status === 'REJECTED' ? '#fee2e2' : '#fef9c3'};
+                    color: ${p.status === 'APPROVED' ? '#15803d' : p.status === 'REJECTED' ? '#b91c1c' : '#a16207'};
                 ">
                     ${p.status}
                 </span>
             </td>
-            <td style="padding: 12px;">
+            <td style="padding: 14px;">
                 ${p.status === 'PENDING' ? `
-                    <button onclick="update('${p.utr}', 'APPROVED')" style="background:#28a745; color:#fff; border:none; padding:6px 12px; border-radius:4px; cursor:pointer; font-weight:bold;">Approve ✅</button>
-                    <button onclick="update('${p.utr}', 'REJECTED')" style="background:#dc3545; color:#fff; border:none; padding:6px 12px; border-radius:4px; cursor:pointer;">Reject ❌</button>
-                ` : `<span>Done</span>`}
+                    <button onclick="update('${p.utr}', 'APPROVED')" style="background:#16a34a; color:#fff; border:none; padding:8px 14px; border-radius:6px; cursor:pointer; font-weight:bold; margin-right: 5px;">Approve ✅</button>
+                    <button onclick="update('${p.utr}', 'REJECTED')" style="background:#dc2626; color:#fff; border:none; padding:8px 14px; border-radius:6px; cursor:pointer; font-weight:bold;">Reject ❌</button>
+                ` : `<span style="color: #94a3b8; font-size: 13px;">Completed</span>`}
             </td>
         </tr>
     `).join('');
@@ -303,23 +308,30 @@ app.get('/admin', (req, res) => {
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>WhatsApp Auto Sender - Payment Admin Panel</title>
+        <title>WhatsApp Bot Pro - Admin Dashboard</title>
         <style>
-            body { font-family: sans-serif; background: #f4f7f6; padding: 20px; }
-            .container { max-width: 1000px; margin: auto; background: #fff; border-radius: 10px; padding: 25px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
-            h2 { color: #075e54; margin-bottom: 20px; }
+            * { box-sizing: border-box; }
+            body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0f172a; color: #334155; padding: 25px; margin: 0; }
+            .container { max-width: 1100px; margin: auto; background: #ffffff; border-radius: 12px; padding: 30px; box-shadow: 0 10px 25px rgba(0,0,0,0.3); }
+            .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #f1f5f9; padding-bottom: 15px; margin-bottom: 20px; }
+            h2 { color: #0f766e; margin: 0; }
+            .status-badge { background: #e0f2fe; color: #0369a1; padding: 6px 14px; border-radius: 20px; font-size: 14px; font-weight: bold; }
             table { width: 100%; border-collapse: collapse; margin-top: 15px; }
-            th { background: #128c7e; color: white; padding: 12px; }
+            th { background: #0f766e; color: white; padding: 14px; text-transform: uppercase; font-size: 13px; letter-spacing: 0.5px; }
+            tr:hover { background-color: #f8fafc; }
         </style>
     </head>
     <body>
         <div class="container">
-            <h2>WhatsApp Auto Sender - Payment Dashboard</h2>
+            <div class="header">
+                <h2>WhatsApp Bot Pro — Payment Dashboard</h2>
+                <div class="status-badge">Total Requests: ${payments.length}</div>
+            </div>
             <table>
                 <thead>
                     <tr>
                         <th>UTR Number</th>
-                        <th>User Info</th>
+                        <th>User Details</th>
                         <th>Plan & Amount</th>
                         <th>Date & Time</th>
                         <th>Status</th>
@@ -327,13 +339,13 @@ app.get('/admin', (req, res) => {
                     </tr>
                 </thead>
                 <tbody>
-                    ${rows || '<tr><td colspan="6" style="padding:20px; text-align:center;">Koi payment request nahi mili.</td></tr>'}
+                    ${rows || '<tr><td colspan="6" style="padding:30px; text-align:center; color:#94a3b8;">Abhi koi payment request nahi aayi hai.</td></tr>'}
                 </tbody>
             </table>
         </div>
         <script>
             function update(utr, status) {
-                const adminKey = prompt("Admin Password dalein:", "myAdminSecret123");
+                const adminKey = prompt("Admin Password daaliye:", "myAdminSecret123");
                 if (!adminKey) return;
                 fetch('/api/admin/update-status', {
                     method: 'POST',
@@ -341,7 +353,10 @@ app.get('/admin', (req, res) => {
                     body: JSON.stringify({ utr, status, adminKey })
                 })
                 .then(r => r.json())
-                .then(data => { alert(data.message); location.reload(); })
+                .then(data => { 
+                    alert(data.message); 
+                    location.reload(); 
+                })
                 .catch(err => alert("Error: " + err));
             }
         </script>
@@ -351,12 +366,13 @@ app.get('/admin', (req, res) => {
     res.send(html);
 });
 
-// Home root
+// Root
 app.get('/', (req, res) => {
-    res.send('Server is live! Admin Panel: <a href="/admin">/admin</a>');
+    res.send('Server is live! Access Admin Panel: <a href="/admin">/admin</a>');
 });
 
 // Start Server
 app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
+    console.log(`🌐 Admin Panel: http://localhost:${PORT}/admin`);
 });
