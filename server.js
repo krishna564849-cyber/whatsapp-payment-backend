@@ -2,7 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
-const https = require('https'); // Gemini API direct call karne ke liye
+const https = require('https');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -27,11 +27,9 @@ function savePayments(payments) {
 }
 
 // ==========================================
-// 🚀 NAYA: Gemini AI Key Test & Chat Endpoints (Gemini 1.5 Flash)
+// 🚀 Gemini AI API Caller (gemini-2.5-flash)
 // ==========================================
-
-// Gemini key verify karne ka common function
-function testGeminiAPI(apiKey, promptText = "Hello") {
+function callGeminiAPI(apiKey, promptText = "Hello", modelName = "gemini-2.5-flash") {
     return new Promise((resolve, reject) => {
         const postData = JSON.stringify({
             contents: [{ parts: [{ text: promptText }] }]
@@ -40,7 +38,7 @@ function testGeminiAPI(apiKey, promptText = "Hello") {
         const options = {
             hostname: 'generativelanguage.googleapis.com',
             port: 443,
-            path: `/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+            path: `/v1beta/models/${modelName}:generateContent?key=${apiKey}`,
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -72,16 +70,26 @@ function testGeminiAPI(apiKey, promptText = "Hello") {
     });
 }
 
-// Android App alag-alag URL par test bhej sakti hai, isliye common routes bana diye hain
+// Helper with fallback model
+async function testGeminiWithFallback(apiKey, promptText) {
+    let result = await callGeminiAPI(apiKey, promptText, "gemini-2.5-flash");
+    if (!result.success) {
+        // Fallback to gemini-2.0-flash if needed
+        result = await callGeminiAPI(apiKey, promptText, "gemini-2.0-flash");
+    }
+    return result;
+}
+
+// Android App Test Routes
 const handleGeminiTest = async (req, res) => {
     const apiKey = req.body.apiKey || req.body.api_key || req.body.key || req.query.apiKey;
 
     if (!apiKey) {
-        return res.status(400).json({ success: false, message: "API Key jaruri hai!" });
+        return res.status(400).json({ success: false, message: "API Key anivarya hai!" });
     }
 
     try {
-        const result = await testGeminiAPI(apiKey.trim(), "Test ping");
+        const result = await testGeminiWithFallback(apiKey.trim(), "Test ping");
         if (result.success) {
             return res.json({ success: true, message: "Gemini AI Connection Successful! ✅", reply: result.reply });
         } else {
@@ -92,14 +100,14 @@ const handleGeminiTest = async (req, res) => {
     }
 };
 
-// Possible test routes
+// Test Routes
 app.post('/api/ai/test', handleGeminiTest);
 app.post('/api/ai/test-key', handleGeminiTest);
 app.post('/api/gemini/test', handleGeminiTest);
 app.post('/api/test-key', handleGeminiTest);
 app.get('/api/ai/test', handleGeminiTest);
 
-// Gemini Chat Route (Auto Reply ke liye)
+// Gemini Chat Route (Auto Reply)
 app.post('/api/ai/chat', async (req, res) => {
     const { apiKey, message, prompt } = req.body;
     const finalPrompt = message || prompt;
@@ -109,7 +117,7 @@ app.post('/api/ai/chat', async (req, res) => {
     }
 
     try {
-        const result = await testGeminiAPI(apiKey.trim(), finalPrompt);
+        const result = await testGeminiWithFallback(apiKey.trim(), finalPrompt);
         if (result.success) {
             res.json({ success: true, reply: result.reply });
         } else {
@@ -126,7 +134,7 @@ app.post('/api/ai/chat', async (req, res) => {
 app.get('/api/app/check-update', (req, res) => {
     res.json({
         success: true,
-        latestVersion: "1.0.1",
+        latestVersion: "1.0.2",
         forceUpdate: true,
         downloadUrl: "https://drive.usercontent.google.com/download?id=1npKaYsL-SkKjjts81unLBTB3YrmKvMHV&export=download&authuser=0"
     });
@@ -344,9 +352,5 @@ app.get('/', (req, res) => {
 
 // Start Server
 app.listen(PORT, () => {
-    console.log(`===================================================`);
     console.log(`🚀 Server running on port ${PORT}`);
-    console.log(`🌐 Admin Panel: http://localhost:${PORT}/admin`);
-    console.log(`🤖 Gemini AI Test Route: POST http://localhost:${PORT}/api/ai/test`);
-    console.log(`===================================================`);
 });
