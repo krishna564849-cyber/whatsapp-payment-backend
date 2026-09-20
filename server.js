@@ -5,52 +5,29 @@ const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-
-const DB_PAYMENTS = path.join(__dirname, 'payments.json');
-const DB_SETTINGS = path.join(__dirname, 'settings.json');
+const DB_FILE = path.join(__dirname, 'payments.json');
 
 // Middleware
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// डेटाबेस हेल्पर्स
+// डेटाबेस फ़ाइल लोड / इनिशियलाइज़ करना
 function getPayments() {
-    if (!fs.existsSync(DB_PAYMENTS)) fs.writeFileSync(DB_PAYMENTS, JSON.stringify([]));
-    try {
-        return JSON.parse(fs.readFileSync(DB_PAYMENTS, 'utf8') || '[]');
-    } catch (e) {
-        return [];
+    if (!fs.existsSync(DB_FILE)) {
+        fs.writeFileSync(DB_FILE, JSON.stringify([]));
     }
+    const data = fs.readFileSync(DB_FILE, 'utf8');
+    return JSON.parse(data || '[]');
 }
 
-function savePayments(data) {
-    fs.writeFileSync(DB_PAYMENTS, JSON.stringify(data, null, 2));
-}
-
-function getSettings() {
-    const defaultSettings = {
-        upiId: "Q620100299@ybl",
-        amount: "199",
-        merchantName: "WhatsApp Bot Pro"
-    };
-    if (!fs.existsSync(DB_SETTINGS)) fs.writeFileSync(DB_SETTINGS, JSON.stringify(defaultSettings));
-    try {
-        return JSON.parse(fs.readFileSync(DB_SETTINGS, 'utf8') || JSON.stringify(defaultSettings));
-    } catch (e) {
-        return defaultSettings;
-    }
-}
-
-function saveSettings(data) {
-    fs.writeFileSync(DB_SETTINGS, JSON.stringify(data, null, 2));
+function savePayments(payments) {
+    fs.writeFileSync(DB_FILE, JSON.stringify(payments, null, 2));
 }
 
 // ==========================================
-// 1. Android App APIs
+// 0. NAYA: App Update & UPI Config API (Version 1.0.1)
 // ==========================================
-
-// अपडेट चेक API
 app.get('/api/app/check-update', (req, res) => {
     res.json({
         success: true,
@@ -60,155 +37,167 @@ app.get('/api/app/check-update', (req, res) => {
     });
 });
 
-// पेमेंट सेटिंग्स प्राप्त करना (UPI ID & Amount)
 app.get('/api/payment/config', (req, res) => {
-    res.json({ success: true, ...getSettings() });
+    res.json({
+        success: true,
+        upiId: "Q620100299@ybl",
+        amount: "299",
+        merchantName: "WhatsApp Bot Pro"
+    });
 });
 
-// ऐप से पेमेंट सबमिट करना (UTR दर्ज करना)
-app.post('/api/payment/submit', (req, res) => {
-    const { utr, phone, name, amount, plan } = req.body;
-    if (!utr || !phone) {
-        return res.status(400).json({ success: false, message: "UTR और Phone नंबर आवश्यक हैं।" });
+// ==========================================
+// 1. Android App API: UTR सबमिट करना
+// (submit-utr aur submit dono handle honge)
+// ==========================================
+const handlePaymentSubmit = (req, res) => {
+    const { utr, planTier, amount, userPhone, userName, phone, name } = req.body;
+
+    const actualUtr = utr ? utr.trim() : null;
+    const actualPhone = userPhone || phone || 'Not provided';
+    const actualName = userName || name || 'Customer';
+
+    if (!actualUtr) {
+        return res.status(400).json({
+            success: false,
+            message: "UTR अनिवार्य है।"
+        });
     }
 
     const payments = getPayments();
-    const cleanUtr = utr.trim();
-    
-    // पहले से मौजूद UTR चेक
-    const existing = payments.find(p => p.utr === cleanUtr);
+
+    // चेक करें कि यह UTR पहले से तो नहीं है
+    const existing = payments.find(p => p.utr.toLowerCase() === actualUtr.toLowerCase());
     if (existing) {
-        return res.json({ success: true, message: "रिक्वेस्ट पहले से दर्ज है।", status: existing.status });
+        return res.json({
+            success: true,
+            message: "यह UTR पहले से सबमिट है। स्थिति: " + existing.status,
+            status: existing.status
+        });
     }
 
     const newPayment = {
-        id: Date.now().toString(),
-        utr: cleanUtr,
-        phone: phone.trim(),
-        name: name || "User",
-        amount: amount || getSettings().amount,
-        plan: plan || "Monthly Pro",
-        status: "Pending", // Pending, Approved, Rejected
-        createdAt: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })
+        id: 'PAY_' + Date.now(),
+        utr: actualUtr,
+        planTier: planTier || 'BASIC_299',
+        amount: amount || (planTier === 'PRO_399' ? 399 : 299),
+        userPhone: actualPhone,
+        userName: actualName,
+        status: 'PENDING',        // PENDING, APPROVED, REJECTED
+        createdAt: new Date().toISOString(),
+        approvedAt: null
     };
 
-    payments.unshift(newPayment);
+    payments.push(newPayment);
     savePayments(payments);
 
-    res.json({ success: true, message: "पेमेंट सबमिट हो गया, अप्रूवल का इंतज़ार करें।", id: newPayment.id });
-});
+    console.log(`[NEW PAYMENT] UTR: ${actualUtr}, Plan: ${newPayment.planTier}, User: ${actualPhone}`);
 
-// ऐप द्वारा स्टेटस चेक (Polling)
-app.get('/api/payment/status/:phoneOrUtr', (req, res) => {
-    const key = req.params.phoneOrUtr.trim();
+    res.json({
+        success: true,
+        message: "UTR सफलतापुर्वक सबमिट हुआ! एडमिन वेरिफिकेशन के बाद एक्टिवेट होगा।",
+        payment: newPayment
+    });
+};
+
+app.post('/api/payment/submit-utr', handlePaymentSubmit);
+app.post('/api/payment/submit', handlePaymentSubmit);
+
+// ==========================================
+// 2. Android App API: स्टेटस चेक करना
+// ==========================================
+app.get('/api/payment/status/:utr', (req, res) => {
+    const { utr } = req.params;
     const payments = getPayments();
-    const payment = payments.find(p => p.utr === key || p.phone === key);
+    const payment = payments.find(p => p.utr.toLowerCase() === utr.trim().toLowerCase());
 
     if (!payment) {
-        return res.json({ success: false, isApproved: false, status: "NotFound" });
+        return res.status(404).json({
+            success: false,
+            message: "UTR नहीं मिला।"
+        });
     }
 
     res.json({
         success: true,
-        status: payment.status,
-        isApproved: payment.status === "Approved"
+        utr: payment.utr,
+        planTier: payment.planTier,
+        status: payment.status, // 'PENDING' | 'APPROVED' | 'REJECTED'
+        isApproved: payment.status === 'APPROVED'
     });
 });
 
 // ==========================================
-// 2. ऑटोमैटिक वेरिफिकेशन एंडपॉइंट (SMS बॉट के लिए)
+// 3. Admin API: अप्रूव या रिजेक्ट करना
 // ==========================================
-app.post('/api/payment/auto-verify', (req, res) => {
-    const { utr } = req.body;
-    if (!utr) {
-        return res.status(400).json({ success: false, message: "UTR आवश्यक है।" });
+app.post('/api/admin/update-status', (req, res) => {
+    const { utr, status, adminKey } = req.body;
+
+    const SECRET_KEY = process.env.ADMIN_KEY || 'myAdminSecret123';
+    if (adminKey !== SECRET_KEY) {
+        return res.status(401).json({ success: false, message: "अनधिकृत (Unauthorized)" });
     }
 
-    const cleanUtr = utr.trim();
     const payments = getPayments();
-    const payment = payments.find(p => p.utr === cleanUtr);
+    const payment = payments.find(p => p.utr.toLowerCase() === utr.trim().toLowerCase());
 
-    if (payment) {
-        payment.status = "Approved";
-        savePayments(payments);
-        return res.json({ success: true, message: `UTR ${cleanUtr} ऑटो-अप्रूव हो गया!` });
+    if (!payment) {
+        return res.status(404).json({ success: false, message: "रिकॉर्ड नहीं मिला।" });
     }
 
-    res.status(404).json({ success: false, message: "डेटाबेस में यह UTR नहीं मिला।" });
+    payment.status = status; // 'APPROVED' या 'REJECTED'
+    if (status === 'APPROVED') {
+        payment.approvedAt = new Date().toISOString();
+    }
+    savePayments(payments);
+
+    res.json({ success: true, message: `UTR ${utr} को ${status} कर दिया गया।`, payment });
 });
 
 // ==========================================
-// 3. Admin Dashboard & Actions
+// 4. Admin API: सभी पेमेंट्स JSON में लाना
 // ==========================================
+app.get('/api/admin/payments', (req, res) => {
+    const adminKey = req.query.adminKey || req.headers['x-admin-key'];
+    const SECRET_KEY = process.env.ADMIN_KEY || 'myAdminSecret123';
 
-// सेटिंग्स सेव करना (UPI / Amount)
-app.post('/admin/settings/update', (req, res) => {
-    const { upiId, amount, merchantName } = req.body;
-    saveSettings({
-        upiId: (upiId || "Q620100299@ybl").trim(),
-        amount: amount || "199",
-        merchantName: merchantName || "WhatsApp Bot Pro"
-    });
-    res.redirect('/admin');
-});
-
-// एडमिन एक्शन (Approve / Reject बटन)
-app.post('/admin/payment/action', (req, res) => {
-    const { id, action } = req.body;
-    const payments = getPayments();
-    const index = payments.findIndex(p => p.id === id);
-
-    if (index !== -1) {
-        payments[index].status = action === 'approve' ? 'Approved' : 'Rejected';
-        savePayments(payments);
+    if (adminKey !== SECRET_KEY) {
+        return res.status(401).json({ success: false, message: "अनधिकृत (Unauthorized)" });
     }
-    res.redirect('/admin');
+
+    const payments = getPayments().reverse();
+    res.json({ success: true, payments });
 });
 
-// एडमिन वेब डैशबोर्ड
+// ==========================================
+// 5. Admin Web Dashboard
+// ==========================================
 app.get('/admin', (req, res) => {
-    const payments = getPayments();
-    const settings = getSettings();
+    const payments = getPayments().reverse();
 
-    let rows = '';
-    payments.forEach((p, index) => {
-        let badgeColor = '#eab308';
-        if (p.status === 'Approved') badgeColor = '#10b981';
-        if (p.status === 'Rejected') badgeColor = '#ef4444';
-
-        rows += `
-            <tr style="border-bottom: 1px solid #334155;">
-                <td style="padding: 12px;">${index + 1}</td>
-                <td style="padding: 12px; font-weight: bold; color: #38bdf8;">${p.utr}</td>
-                <td style="padding: 12px;">${p.phone}</td>
-                <td style="padding: 12px;">₹${p.amount}</td>
-                <td style="padding: 12px;">
-                    <span style="background: ${badgeColor}22; color: ${badgeColor}; padding: 4px 8px; border-radius: 6px; font-weight: 600; font-size: 13px;">
-                        ${p.status}
-                    </span>
-                </td>
-                <td style="padding: 12px; color: #94a3b8; font-size: 12px;">${p.createdAt}</td>
-                <td style="padding: 12px;">
-                    ${p.status === 'Pending' ? `
-                        <form method="POST" action="/admin/payment/action" style="display:inline;">
-                            <input type="hidden" name="id" value="${p.id}">
-                            <input type="hidden" name="action" value="approve">
-                            <button type="submit" style="background: #10b981; color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-weight: 600;">Approve</button>
-                        </form>
-                        <form method="POST" action="/admin/payment/action" style="display:inline; margin-left: 6px;">
-                            <input type="hidden" name="id" value="${p.id}">
-                            <input type="hidden" name="action" value="reject">
-                            <button type="submit" style="background: #ef4444; color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer;">Reject</button>
-                        </form>
-                    ` : `<span style="color: #64748b; font-size: 13px;">No action</span>`}
-                </td>
-            </tr>
-        `;
-    });
-
-    if (payments.length === 0) {
-        rows = `<tr><td colspan="7" style="padding: 24px; text-align: center; color: #94a3b8;">कोई पेमेंट रिक्वेस्ट नहीं मिली।</td></tr>`;
-    }
+    const rows = payments.map(p => `
+        <tr style="border-bottom: 1px solid #ddd; text-align: center;">
+            <td style="padding: 12px;"><b>${p.utr}</b></td>
+            <td style="padding: 12px;">${p.userName}<br><small>${p.userPhone}</small></td>
+            <td style="padding: 12px;">₹${p.amount} (${p.planTier})</td>
+            <td style="padding: 12px;"><small>${new Date(p.createdAt).toLocaleString('en-IN')}</small></td>
+            <td style="padding: 12px;">
+                <span style="
+                    padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: bold;
+                    background: ${p.status === 'APPROVED' ? '#d4edda' : p.status === 'REJECTED' ? '#f8d7da' : '#fff3cd'};
+                    color: ${p.status === 'APPROVED' ? '#155724' : p.status === 'REJECTED' ? '#721c24' : '#856404'};
+                ">
+                    ${p.status}
+                </span>
+            </td>
+            <td style="padding: 12px;">
+                ${p.status === 'PENDING' ? `
+                    <button onclick="update('${p.utr}', 'APPROVED')" style="background:#28a745; color:#fff; border:none; padding:6px 12px; border-radius:4px; cursor:pointer; font-weight:bold;">Approve ✅</button>
+                    <button onclick="update('${p.utr}', 'REJECTED')" style="background:#dc3545; color:#fff; border:none; padding:6px 12px; border-radius:4px; cursor:pointer;">Reject ❌</button>
+                ` : `<span>Done</span>`}
+            </td>
+        </tr>
+    `).join('');
 
     const html = `
     <!DOCTYPE html>
@@ -216,65 +205,55 @@ app.get('/admin', (req, res) => {
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Payment Admin Panel</title>
+        <title>WhatsApp Auto Sender - Payment Admin Panel</title>
         <style>
-            body { font-family: system-ui, sans-serif; background: #0b1329; color: #f1f5f9; margin: 0; padding: 20px; }
-            .container { max-width: 1050px; margin: auto; }
-            .box { background: #16223f; border: 1px solid #233358; border-radius: 10px; padding: 20px; margin-bottom: 24px; }
-            h2, h3 { color: #38bdf8; margin-top: 0; }
-            input { background: #0b1329; border: 1px solid #334155; color: #fff; padding: 10px; border-radius: 6px; margin-right: 10px; margin-bottom: 10px; }
-            button.btn-save { background: #38bdf8; color: #000; border: none; padding: 10px 20px; border-radius: 6px; font-weight: bold; cursor: pointer; }
-            table { width: 100%; border-collapse: collapse; text-align: left; margin-top: 10px; }
-            th { background: #0b1329; padding: 12px; color: #94a3b8; }
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f4f7f6; padding: 20px; }
+            .container { max-width: 1000px; margin: auto; background: #fff; border-radius: 10px; padding: 25px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+            h2 { color: #075e54; margin-bottom: 20px; }
+            table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+            th { background: #128c7e; color: white; padding: 12px; }
         </style>
     </head>
     <body>
         <div class="container">
-            <h2>⚙️ WhatsApp Payment Approval & Admin Panel</h2>
-            
-            <div class="box">
-                <h3>QR Code / UPI सेटिंग्स</h3>
-                <form method="POST" action="/admin/settings/update" style="display:flex; flex-wrap: wrap; align-items: center;">
-                    <div>
-                        <label style="display:block; font-size: 12px; color:#94a3b8; margin-bottom:4px;">UPI ID</label>
-                        <input type="text" name="upiId" value="${settings.upiId}" required>
-                    </div>
-                    <div>
-                        <label style="display:block; font-size: 12px; color:#94a3b8; margin-bottom:4px;">राशि (₹)</label>
-                        <input type="number" name="amount" value="${settings.amount}" required>
-                    </div>
-                    <div>
-                        <label style="display:block; font-size: 12px; color:#94a3b8; margin-bottom:4px;">Merchant Name</label>
-                        <input type="text" name="merchantName" value="${settings.merchantName}">
-                    </div>
-                    <div style="margin-top: 16px;">
-                        <button type="submit" class="btn-save">सेटिंग्स सेव करें</button>
-                    </div>
-                </form>
-            </div>
-
-            <div class="box">
-                <h3>पेमेंट रिक्वेस्ट्स (${payments.filter(p=>p.status==='Pending').length} पेंडिंग)</h3>
-                <div style="overflow-x: auto;">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>#</th>
-                                <th>UTR / Trans ID</th>
-                                <th>Phone</th>
-                                <th>Amount</th>
-                                <th>Status</th>
-                                <th>Date</th>
-                                <th>Action</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${rows}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
+            <h2>WhatsApp Auto Sender - UTR Payment Verifier</h2>
+            <p>यहाँ आपके बैंक में आया UTR नंबर चेक करें और सीधे <b>Approve</b> करें। Approve करते ही यूज़र के ऐप में प्लान अनलॉक हो जाएगा।</p>
+            <p><b>Active UPI ID:</b> Q620100299@ybl | <b>Latest App Version:</b> 1.0.1</p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>UTR Number</th>
+                        <th>User Info</th>
+                        <th>Plan & Amount</th>
+                        <th>Date & Time</th>
+                        <th>Status</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${rows || '<tr><td colspan="6" style="padding:20px; text-align:center;">कोई पेमेंट रिक्वेस्ट नहीं मिली।</td></tr>'}
+                </tbody>
+            </table>
         </div>
+
+        <script>
+            function update(utr, status) {
+                const adminKey = prompt("कृपया Admin Password डालें:", "myAdminSecret123");
+                if (!adminKey) return;
+
+                fetch('/api/admin/update-status', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ utr, status, adminKey })
+                })
+                .then(r => r.json())
+                .then(data => {
+                    alert(data.message);
+                    location.reload();
+                })
+                .catch(err => alert("Error: " + err));
+            }
+        </script>
     </body>
     </html>
     `;
@@ -282,12 +261,17 @@ app.get('/admin', (req, res) => {
     res.send(html);
 });
 
-// होम रूट
+// Home root
 app.get('/', (req, res) => {
-    res.send('Server is live! Go to <a href="/admin">/admin</a>');
+    res.send('Server is live! Admin Panel: <a href="/admin">/admin</a>');
 });
 
 // सर्वर स्टार्ट
 app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+    console.log(`===================================================`);
+    console.log(`🚀 Server running on port ${PORT}`);
+    console.log(`🌐 Admin Panel: http://localhost:${PORT}/admin`);
+    console.log(`🔄 Version Check: http://localhost:${PORT}/api/app/check-update (v1.0.1)`);
+    console.log(`📲 API Submit: POST http://localhost:${PORT}/api/payment/submit-utr`);
+    console.log(`===================================================`);
 });
