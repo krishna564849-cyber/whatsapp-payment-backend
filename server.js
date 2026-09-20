@@ -27,18 +27,26 @@ function savePayments(payments) {
 }
 
 // ==========================================
-// 🚀 Gemini AI API Caller (gemini-2.5-flash)
+// 🚀 Gemini 3.6 Flash API Caller
 // ==========================================
-function callGeminiAPI(apiKey, promptText = "Hello", modelName = "gemini-2.5-flash") {
+function callGemini36Flash(apiKey, promptText = "Hello") {
     return new Promise((resolve, reject) => {
         const postData = JSON.stringify({
-            contents: [{ parts: [{ text: promptText }] }]
+            contents: [
+                {
+                    parts: [{ text: promptText }]
+                }
+            ],
+            generationConfig: {
+                temperature: 0.7,
+                maxOutputTokens: 800
+            }
         });
 
         const options = {
             hostname: 'generativelanguage.googleapis.com',
             port: 443,
-            path: `/v1beta/models/${modelName}:generateContent?key=${apiKey}`,
+            path: `/v1beta/models/gemini-3.6-flash:generateContent?key=${encodeURIComponent(apiKey.trim())}`,
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -54,70 +62,68 @@ function callGeminiAPI(apiKey, promptText = "Hello", modelName = "gemini-2.5-fla
                     const parsed = JSON.parse(body);
                     if (res.statusCode === 200) {
                         const reply = parsed?.candidates?.[0]?.content?.parts?.[0]?.text || "OK";
-                        resolve({ success: true, reply });
+                        resolve({ success: true, reply: reply.trim() });
                     } else {
-                        resolve({ success: false, error: parsed?.error?.message || `HTTP ${res.statusCode}` });
+                        const errMsg = parsed?.error?.message || `HTTP ${res.statusCode}`;
+                        resolve({ success: false, error: errMsg });
                     }
                 } catch (e) {
-                    resolve({ success: false, error: "Invalid response from Google AI" });
+                    resolve({ success: false, error: "Invalid response from Google AI API" });
                 }
             });
         });
 
-        req.on('error', (err) => reject(err));
+        req.on('error', (err) => resolve({ success: false, error: err.message }));
         req.write(postData);
         req.end();
     });
 }
 
-// Helper with fallback model
-async function testGeminiWithFallback(apiKey, promptText) {
-    let result = await callGeminiAPI(apiKey, promptText, "gemini-2.5-flash");
-    if (!result.success) {
-        // Fallback to gemini-2.0-flash if needed
-        result = await callGeminiAPI(apiKey, promptText, "gemini-2.0-flash");
-    }
-    return result;
-}
-
-// Android App Test Routes
+// Android App Test Routes (API Key Verification)
 const handleGeminiTest = async (req, res) => {
     const apiKey = req.body.apiKey || req.body.api_key || req.body.key || req.query.apiKey;
 
     if (!apiKey) {
-        return res.status(400).json({ success: false, message: "API Key anivarya hai!" });
+        return res.status(400).json({ success: false, message: "API Key jaruri hai!" });
     }
 
     try {
-        const result = await testGeminiWithFallback(apiKey.trim(), "Test ping");
+        const result = await callGemini36Flash(apiKey.trim(), "Reply 'OK' in one word to test connection.");
         if (result.success) {
-            return res.json({ success: true, message: "Gemini AI Connection Successful! ✅", reply: result.reply });
+            return res.json({ 
+                success: true, 
+                message: "Gemini 3.6 Flash Connection Successful! ✅", 
+                reply: result.reply 
+            });
         } else {
-            return res.status(400).json({ success: false, message: "API Key test failed: " + result.error });
+            return res.status(400).json({ 
+                success: false, 
+                message: "API Key test failed: " + result.error 
+            });
         }
     } catch (err) {
         return res.status(500).json({ success: false, message: "Server error: " + err.message });
     }
 };
 
-// Test Routes
+// All Compatible Test Routes
 app.post('/api/ai/test', handleGeminiTest);
 app.post('/api/ai/test-key', handleGeminiTest);
 app.post('/api/gemini/test', handleGeminiTest);
 app.post('/api/test-key', handleGeminiTest);
 app.get('/api/ai/test', handleGeminiTest);
 
-// Gemini Chat Route (Auto Reply)
+// Gemini Chat Route (WhatsApp Auto Reply)
 app.post('/api/ai/chat', async (req, res) => {
     const { apiKey, message, prompt } = req.body;
     const finalPrompt = message || prompt;
 
     if (!apiKey || !finalPrompt) {
-        return res.status(400).json({ success: false, message: "API Key aur message dono chahiye." });
+        return res.status(400).json({ success: false, message: "API Key aur message dono jaruri hain." });
     }
 
     try {
-        const result = await testGeminiWithFallback(apiKey.trim(), finalPrompt);
+        const result = await callGemini36Flash(apiKey.trim(), finalPrompt);
         if (result.success) {
             res.json({ success: true, reply: result.reply });
         } else {
