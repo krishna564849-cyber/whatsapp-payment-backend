@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
+const https = require('https'); // Gemini API direct call karne ke liye
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -12,35 +13,121 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// डेटाबेस फ़ाइल लोड / सेव फ़ंक्शन
+// Database File Helpers
 function getPayments() {
-    try {
-        if (!fs.existsSync(DB_FILE)) {
-            fs.writeFileSync(DB_FILE, JSON.stringify([]));
-        }
-        const data = fs.readFileSync(DB_FILE, 'utf8');
-        return JSON.parse(data || '[]');
-    } catch (e) {
-        return [];
+    if (!fs.existsSync(DB_FILE)) {
+        fs.writeFileSync(DB_FILE, JSON.stringify([]));
     }
+    const data = fs.readFileSync(DB_FILE, 'utf8');
+    return JSON.parse(data || '[]');
 }
 
 function savePayments(payments) {
-    try {
-        fs.writeFileSync(DB_FILE, JSON.stringify(payments, null, 2));
-    } catch (e) {
-        console.error("File save error:", e);
-    }
+    fs.writeFileSync(DB_FILE, JSON.stringify(payments, null, 2));
 }
 
 // ==========================================
-// 1. App Update & UPI Config API (v1.0.2)
+// 🚀 NAYA: Gemini AI Key Test & Chat Endpoints (Gemini 1.5 Flash)
+// ==========================================
+
+// Gemini key verify karne ka common function
+function testGeminiAPI(apiKey, promptText = "Hello") {
+    return new Promise((resolve, reject) => {
+        const postData = JSON.stringify({
+            contents: [{ parts: [{ text: promptText }] }]
+        });
+
+        const options = {
+            hostname: 'generativelanguage.googleapis.com',
+            port: 443,
+            path: `/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(postData)
+            }
+        };
+
+        const req = https.request(options, (res) => {
+            let body = '';
+            res.on('data', (chunk) => body += chunk);
+            res.on('end', () => {
+                try {
+                    const parsed = JSON.parse(body);
+                    if (res.statusCode === 200) {
+                        const reply = parsed?.candidates?.[0]?.content?.parts?.[0]?.text || "OK";
+                        resolve({ success: true, reply });
+                    } else {
+                        resolve({ success: false, error: parsed?.error?.message || `HTTP ${res.statusCode}` });
+                    }
+                } catch (e) {
+                    resolve({ success: false, error: "Invalid response from Google AI" });
+                }
+            });
+        });
+
+        req.on('error', (err) => reject(err));
+        req.write(postData);
+        req.end();
+    });
+}
+
+// Android App alag-alag URL par test bhej sakti hai, isliye common routes bana diye hain
+const handleGeminiTest = async (req, res) => {
+    const apiKey = req.body.apiKey || req.body.api_key || req.body.key || req.query.apiKey;
+
+    if (!apiKey) {
+        return res.status(400).json({ success: false, message: "API Key jaruri hai!" });
+    }
+
+    try {
+        const result = await testGeminiAPI(apiKey.trim(), "Test ping");
+        if (result.success) {
+            return res.json({ success: true, message: "Gemini AI Connection Successful! ✅", reply: result.reply });
+        } else {
+            return res.status(400).json({ success: false, message: "API Key test failed: " + result.error });
+        }
+    } catch (err) {
+        return res.status(500).json({ success: false, message: "Server error: " + err.message });
+    }
+};
+
+// Possible test routes
+app.post('/api/ai/test', handleGeminiTest);
+app.post('/api/ai/test-key', handleGeminiTest);
+app.post('/api/gemini/test', handleGeminiTest);
+app.post('/api/test-key', handleGeminiTest);
+app.get('/api/ai/test', handleGeminiTest);
+
+// Gemini Chat Route (Auto Reply ke liye)
+app.post('/api/ai/chat', async (req, res) => {
+    const { apiKey, message, prompt } = req.body;
+    const finalPrompt = message || prompt;
+
+    if (!apiKey || !finalPrompt) {
+        return res.status(400).json({ success: false, message: "API Key aur message dono chahiye." });
+    }
+
+    try {
+        const result = await testGeminiAPI(apiKey.trim(), finalPrompt);
+        if (result.success) {
+            res.json({ success: true, reply: result.reply });
+        } else {
+            res.status(400).json({ success: false, error: result.error });
+        }
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ==========================================
+// 0. App Update & UPI Config API
 // ==========================================
 app.get('/api/app/check-update', (req, res) => {
     res.json({
         success: true,
-        latestVersion: "1.0.2",
-        forceUpdate: false,
+        latestVersion: "1.0.1",
+        forceUpdate: true,
         downloadUrl: "https://drive.usercontent.google.com/download?id=1npKaYsL-SkKjjts81unLBTB3YrmKvMHV&export=download&authuser=0"
     });
 });
@@ -55,7 +142,7 @@ app.get('/api/payment/config', (req, res) => {
 });
 
 // ==========================================
-// 2. Android App API: UTR सबमिट करना
+// 1. Android App API: UTR Submit
 // ==========================================
 const handlePaymentSubmit = (req, res) => {
     const { utr, planTier, amount, userPhone, userName, phone, name } = req.body;
@@ -65,19 +152,15 @@ const handlePaymentSubmit = (req, res) => {
     const actualName = userName || name || 'Customer';
 
     if (!actualUtr) {
-        return res.status(400).json({
-            success: false,
-            message: "UTR अनिवार्य है।"
-        });
+        return res.status(400).json({ success: false, message: "UTR anivarya hai." });
     }
 
     const payments = getPayments();
-
     const existing = payments.find(p => p.utr.toLowerCase() === actualUtr.toLowerCase());
     if (existing) {
         return res.json({
             success: true,
-            message: "यह UTR पहले से सबमिट है। स्थिति: " + existing.status,
+            message: "Yeh UTR pehle se submit hai. Status: " + existing.status,
             status: existing.status
         });
     }
@@ -97,11 +180,9 @@ const handlePaymentSubmit = (req, res) => {
     payments.push(newPayment);
     savePayments(payments);
 
-    console.log(`[NEW PAYMENT] UTR: ${actualUtr}, Plan: ${newPayment.planTier}, User: ${actualPhone}`);
-
     res.json({
         success: true,
-        message: "UTR सफलतापूर्वक सबमिट हुआ! एडमिन वेरिफिकेशन के बाद एक्टिवेट होगा।",
+        message: "UTR safaltapurvak submit hua! Admin verification ke baad activate hoga.",
         payment: newPayment
     });
 };
@@ -110,7 +191,7 @@ app.post('/api/payment/submit-utr', handlePaymentSubmit);
 app.post('/api/payment/submit', handlePaymentSubmit);
 
 // ==========================================
-// 3. Android App API: स्टेटस चेक करना
+// 2. Android App API: Status Check
 // ==========================================
 app.get('/api/payment/status/:utr', (req, res) => {
     const { utr } = req.params;
@@ -118,10 +199,7 @@ app.get('/api/payment/status/:utr', (req, res) => {
     const payment = payments.find(p => p.utr.toLowerCase() === utr.trim().toLowerCase());
 
     if (!payment) {
-        return res.status(404).json({
-            success: false,
-            message: "UTR नहीं मिला।"
-        });
+        return res.status(404).json({ success: false, message: "UTR nahi mila." });
     }
 
     res.json({
@@ -134,21 +212,21 @@ app.get('/api/payment/status/:utr', (req, res) => {
 });
 
 // ==========================================
-// 4. Admin API: स्टेटस अपडेट
+// 3. Admin API: Update Status
 // ==========================================
 app.post('/api/admin/update-status', (req, res) => {
     const { utr, status, adminKey } = req.body;
-
     const SECRET_KEY = process.env.ADMIN_KEY || 'myAdminSecret123';
+
     if (adminKey !== SECRET_KEY) {
-        return res.status(401).json({ success: false, message: "अनधिकृत (Unauthorized)" });
+        return res.status(401).json({ success: false, message: "Unauthorized" });
     }
 
     const payments = getPayments();
     const payment = payments.find(p => p.utr.toLowerCase() === utr.trim().toLowerCase());
 
     if (!payment) {
-        return res.status(404).json({ success: false, message: "रिकॉर्ड नहीं मिला।" });
+        return res.status(404).json({ success: false, message: "Record nahi mila." });
     }
 
     payment.status = status;
@@ -157,15 +235,18 @@ app.post('/api/admin/update-status', (req, res) => {
     }
     savePayments(payments);
 
-    res.json({ success: true, message: `UTR ${utr} को ${status} कर दिया गया।`, payment });
+    res.json({ success: true, message: `UTR ${utr} ko ${status} kar diya gaya.`, payment });
 });
 
+// ==========================================
+// 4. Admin API: Get All Payments
+// ==========================================
 app.get('/api/admin/payments', (req, res) => {
     const adminKey = req.query.adminKey || req.headers['x-admin-key'];
     const SECRET_KEY = process.env.ADMIN_KEY || 'myAdminSecret123';
 
     if (adminKey !== SECRET_KEY) {
-        return res.status(401).json({ success: false, message: "अनधिकृत (Unauthorized)" });
+        return res.status(401).json({ success: false, message: "Unauthorized" });
     }
 
     const payments = getPayments().reverse();
@@ -208,9 +289,9 @@ app.get('/admin', (req, res) => {
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Flywheel Transport - Payment Admin Panel</title>
+        <title>WhatsApp Auto Sender - Payment Admin Panel</title>
         <style>
-            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f4f7f6; padding: 20px; }
+            body { font-family: sans-serif; background: #f4f7f6; padding: 20px; }
             .container { max-width: 1000px; margin: auto; background: #fff; border-radius: 10px; padding: 25px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
             h2 { color: #075e54; margin-bottom: 20px; }
             table { width: 100%; border-collapse: collapse; margin-top: 15px; }
@@ -219,9 +300,7 @@ app.get('/admin', (req, res) => {
     </head>
     <body>
         <div class="container">
-            <h2>WhatsApp Auto Sender - UTR Payment Verifier</h2>
-            <p>यहाँ UTR नंबर चेक करें और <b>Approve</b> करें ताकि यूज़र के ऐप में प्लान तुरंत अनलॉक हो सके।</p>
-            <p><b>Active UPI ID:</b> Q620100299@ybl | <b>App Version:</b> 1.0.2</p>
+            <h2>WhatsApp Auto Sender - Payment Dashboard</h2>
             <table>
                 <thead>
                     <tr>
@@ -234,42 +313,40 @@ app.get('/admin', (req, res) => {
                     </tr>
                 </thead>
                 <tbody>
-                    ${rows || '<tr><td colspan="6" style="padding:20px; text-align:center;">कोई पेमेंट रिक्वेस्ट नहीं मिली।</td></tr>'}
+                    ${rows || '<tr><td colspan="6" style="padding:20px; text-align:center;">Koi payment request nahi mili.</td></tr>'}
                 </tbody>
             </table>
         </div>
-
         <script>
             function update(utr, status) {
-                const adminKey = prompt("कृपया Admin Password डालें:", "myAdminSecret123");
+                const adminKey = prompt("Admin Password dalein:", "myAdminSecret123");
                 if (!adminKey) return;
-
                 fetch('/api/admin/update-status', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ utr, status, adminKey })
                 })
                 .then(r => r.json())
-                .then(data => {
-                    alert(data.message);
-                    location.reload();
-                })
+                .then(data => { alert(data.message); location.reload(); })
                 .catch(err => alert("Error: " + err));
             }
         </script>
     </body>
     </html>
     `;
-
     res.send(html);
 });
 
-// Home Route
+// Home root
 app.get('/', (req, res) => {
     res.send('Server is live! Admin Panel: <a href="/admin">/admin</a>');
 });
 
-// सर्वर स्टार्ट
+// Start Server
 app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+    console.log(`===================================================`);
+    console.log(`🚀 Server running on port ${PORT}`);
+    console.log(`🌐 Admin Panel: http://localhost:${PORT}/admin`);
+    console.log(`🤖 Gemini AI Test Route: POST http://localhost:${PORT}/api/ai/test`);
+    console.log(`===================================================`);
 });
