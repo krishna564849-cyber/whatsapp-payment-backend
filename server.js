@@ -2,35 +2,39 @@ const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
-const { GoogleGenAI } = require('@google/genai');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const DB_FILE = path.join(__dirname, 'payments.json');
-
-// Gemini AI इनिशियलाइज़ेशन (GEMINI_API_KEY को पर्यावरण वेरिएबल में रखें)
-const ai = new GoogleGenAI({});
 
 // Middleware
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// डेटाबेस फ़ाइल फ़ंक्शन
+// डेटाबेस फ़ाइल लोड / सेव फ़ंक्शन
 function getPayments() {
-    if (!fs.existsSync(DB_FILE)) {
-        fs.writeFileSync(DB_FILE, JSON.stringify([]));
+    try {
+        if (!fs.existsSync(DB_FILE)) {
+            fs.writeFileSync(DB_FILE, JSON.stringify([]));
+        }
+        const data = fs.readFileSync(DB_FILE, 'utf8');
+        return JSON.parse(data || '[]');
+    } catch (e) {
+        return [];
     }
-    const data = fs.readFileSync(DB_FILE, 'utf8');
-    return JSON.parse(data || '[]');
 }
 
 function savePayments(payments) {
-    fs.writeFileSync(DB_FILE, JSON.stringify(payments, null, 2));
+    try {
+        fs.writeFileSync(DB_FILE, JSON.stringify(payments, null, 2));
+    } catch (e) {
+        console.error("File save error:", e);
+    }
 }
 
 // ==========================================
-// 1. App Update & UPI Configuration
+// 1. App Update & UPI Config API (v1.0.2)
 // ==========================================
 app.get('/api/app/check-update', (req, res) => {
     res.json({
@@ -51,71 +55,7 @@ app.get('/api/payment/config', (req, res) => {
 });
 
 // ==========================================
-// 2. Gemini AI Assistant API (Flywheel Transport)
-// ==========================================
-const FLYWHEEL_SYSTEM_PROMPT = `
-आप Flywheel Transport Pvt. Ltd. के आधिकारिक व्हाट्सएप AI असिस्टेंट हैं, जो Delhi-NCR (Gurgaon, Noida, Delhi) में कॉर्पोरेट कैब अटैचमेंट, फ्लीट और एम्प्लॉई ट्रांसपोर्टेशन सेवाएं संभालते हैं।
-
-मुख्य नियम:
-1. भाषा और टोन: सरल हिंदी/हिंग्लिश। संक्षिप्त, विनम्र और स्पष्ट उत्तर दें। मोबाइल स्क्रीन के लिए स्पष्ट लाइन ब्रेक्स, इमोजी और बुलेट पॉइंट्स का उपयोग करें।
-2. जब भी कोई नया यूजर 'Hi', 'Hello', 'Hii', 'Start' या 'Menu' भेजे, केवल मुख्य मेनू भेजें:
-
-Welcome to *Flywheel Transport Pvt. Ltd.* 🚗✨
-हम Delhi-NCR में कॉर्पोरेट कैब अटैचमेंट और फ्लीट सेवाएं प्रदान करते हैं।
-
-कृपया नंबर लिखकर विकल्प चुनें:
-1️⃣ Attach a Cab / Fleet (Ertiga, Dzire, Aura, EVs, आदि)
-2️⃣ Corporate / Employee Transport Inquiry
-3️⃣ Duty Rates & Route Information
-4️⃣ Speak with Operations / Human Support
-
-3. यदि यूजर '1' या गाड़ी लगाने की बात करे, तो पूछें:
-• गाड़ी का मॉडल और फ्यूल (उदा. Dzire CNG, Aura CNG, Ertiga, Tigor EV)
-• मॉडल वर्ष (उदा. 2023, 2024, 2025)
-• रजिस्ट्रेशन प्रकार (कमर्शियल पीली प्लेट: हाँ / नहीं)
-• पसंदीदा लोकेशन (Gurgaon / Noida / Delhi)
-
-4. यदि यूजर दस्तावेज़ पूछे:
-गाड़ी के कागजात: RC (पीली प्लेट), फिटनेस, कमर्शियल इंश्योरेंस, परमिट, PUC।
-ड्राइवर के कागजात: कमर्शियल DL, पुलिस वेरिफिकेशन, आधार/पैन, बैंक खाता विवरण।
-
-5. यदि यूजर '2' चुने: कंपनी नाम, गाड़ियों की आवश्यकता, संख्या और ऑफिस लोकेशन पूछें।
-6. यदि यूजर '3' चुने: बताएं कि रेट्स मॉडल (Sedan/SUV/EV), शिफ्ट और लोकेशन पर निर्भर करते हैं और गाड़ी का मॉडल पूछें।
-7. यदि यूजर '4' चुने: ऑपरेशंस टीम से कनेक्ट करने का भरोसा दें और सवाल पूछें।
-8. यदि यूजर 'Ok', 'Done' आदि कोई साधारण बात कहे, तो विनम्रता से पूछें कि उन्हें क्या सहायता चाहिए या 'Menu' टाइप करने को कहें। कभी भी शांत न रहें।
-`;
-
-app.post('/api/ai/chat', async (req, res) => {
-    try {
-        const { message } = req.body;
-        if (!message || !message.trim()) {
-            return res.status(400).json({ success: false, reply: "मैसेज खाली है।" });
-        }
-
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: message,
-            config: {
-                systemInstruction: FLYWHEEL_SYSTEM_PROMPT,
-                temperature: 0.3
-            }
-        });
-
-        res.json({
-            success: true,
-            reply: response.text
-        });
-    } catch (error) {
-        console.error("Gemini API Error:", error);
-        res.status(500).json({
-            success: false,
-            reply: "सर्वर व्यस्त है। कृपया मुख्य मेनू देखने के लिए 'Menu' टाइप करें।"
-        });
-    }
-});
-
-// ==========================================
-// 3. Android App API: UTR सबमिट करना
+// 2. Android App API: UTR सबमिट करना
 // ==========================================
 const handlePaymentSubmit = (req, res) => {
     const { utr, planTier, amount, userPhone, userName, phone, name } = req.body;
@@ -170,7 +110,7 @@ app.post('/api/payment/submit-utr', handlePaymentSubmit);
 app.post('/api/payment/submit', handlePaymentSubmit);
 
 // ==========================================
-// 4. Android App API: स्टेटस चेक करना
+// 3. Android App API: स्टेटस चेक करना
 // ==========================================
 app.get('/api/payment/status/:utr', (req, res) => {
     const { utr } = req.params;
@@ -194,7 +134,7 @@ app.get('/api/payment/status/:utr', (req, res) => {
 });
 
 // ==========================================
-// 5. Admin API: स्टेटस अपडेट और पेमेंट्स लिस्ट
+// 4. Admin API: स्टेटस अपडेट
 // ==========================================
 app.post('/api/admin/update-status', (req, res) => {
     const { utr, status, adminKey } = req.body;
@@ -233,7 +173,7 @@ app.get('/api/admin/payments', (req, res) => {
 });
 
 // ==========================================
-// 6. Admin Web Dashboard
+// 5. Admin Web Dashboard
 // ==========================================
 app.get('/admin', (req, res) => {
     const payments = getPayments().reverse();
@@ -331,10 +271,5 @@ app.get('/', (req, res) => {
 
 // सर्वर स्टार्ट
 app.listen(PORT, () => {
-    console.log(`===================================================`);
-    console.log(`🚀 Server running on port ${PORT}`);
-    console.log(`🌐 Admin Panel: http://localhost:${PORT}/admin`);
-    console.log(`🤖 AI Chat API: POST http://localhost:${PORT}/api/ai/chat`);
-    console.log(`🔄 Version Check: http://localhost:${PORT}/api/app/check-update (v1.0.2)`);
-    console.log(`===================================================`);
+    console.log(`Server running on port ${PORT}`);
 });
