@@ -12,7 +12,7 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// डेटाबेस फ़ाइल लोड / इनिशियलाइज़ करना (फ़ाइल-बेस्ड डेटाबेस, नो झंझट)
+// डेटाबेस फ़ाइल लोड / इनिशियलाइज़ करना (फ़ाइल-बेस्ड डेटाबेस)
 function getPayments() {
     if (!fs.existsSync(DB_FILE)) {
         fs.writeFileSync(DB_FILE, JSON.stringify([]));
@@ -26,14 +26,21 @@ function savePayments(payments) {
 }
 
 // ==========================================
-// 0. Android App API: नया अपडेट चेक करना (New Feature)
+// 0. Android App API: नया अपडेट चेक करना (Force Update)
 // ==========================================
 app.get('/api/app/check-update', (req, res) => {
     res.json({
         success: true,
-        latestVersion: "1.0.1",   // जब भी नया ऐप वर्ज़न जारी करें, यहाँ नंबर बदल दें (उदा. 1.0.2)
-        forceUpdate: false,       // true = बिना अपडेट ऐप नहीं खुलेगा | false = यूज़र Skip कर सकता है
-        downloadUrl: "https://your-server.com/app.apk", // अपनी नई APK फ़ाइल का सीधा डाउनलोड लिंक यहाँ डालें
+        latestVersion: "1.0.1",
+        forceUpdate: true,       // Force Update एक्टिव है (बिना अपडेट किए ऐप नहीं चलेगा)
+        downloadUrl: "https://drive.usercontent.google.com/download?id=1npKaYsL-SkKjjts81unLBTB3YrmKvMHV&export=download&authuser=0"
+    });
+});
+
+// सर्वर स्टार्ट करना
+app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+});
         title: "नया अपडेट उपलब्ध है!",
         message: "बेहतर अनुभव और नए फीचर्स के लिए ऐप को अपडेट करें।"
     });
