@@ -1,8 +1,10 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
+const Groq = require('groq-sdk');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -31,74 +33,49 @@ function savePayments(payments) {
 }
 
 // ==========================================
-// 🚀 Gemini 3.6 Flash API Engine
+// 🚀 Groq API Engine
 // ==========================================
-function callGemini36Flash(apiKey, promptText = "Hello") {
-    return new Promise((resolve, reject) => {
-        const postData = JSON.stringify({
-            contents: [
+async function callGroqAPI(apiKey, promptText = "Hello") {
+    try {
+        const keyToUse = apiKey || process.env.GROQ_API_KEY;
+
+        if (!keyToUse) {
+            return { success: false, error: "Groq API Key nahi mili. Render Environment me add karein." };
+        }
+
+        const groq = new Groq({
+            apiKey: keyToUse
+        });
+
+        const chatCompletion = await groq.chat.completions.create({
+            messages: [
                 {
-                    parts: [{ text: promptText }]
+                    role: "user",
+                    content: promptText
                 }
             ],
-            generationConfig: {
-                temperature: 0.7,
-                maxOutputTokens: 800
-            }
+            model: "openai/gpt-oss-120b"
         });
 
-        const options = {
-            hostname: 'generativelanguage.googleapis.com',
-            port: 443,
-            path: `/v1beta/models/gemini-3.6-flash:generateContent?key=${encodeURIComponent(apiKey.trim())}`,
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Content-Length': Buffer.byteLength(postData)
-            }
-        };
-
-        const req = https.request(options, (res) => {
-            let body = '';
-            res.on('data', (chunk) => body += chunk);
-            res.on('end', () => {
-                try {
-                    const parsed = JSON.parse(body);
-                    if (res.statusCode === 200) {
-                        const reply = parsed?.candidates?.[0]?.content?.parts?.[0]?.text || "OK";
-                        resolve({ success: true, reply: reply.trim() });
-                    } else {
-                        const errMsg = parsed?.error?.message || `HTTP ${res.statusCode}`;
-                        resolve({ success: false, error: errMsg });
-                    }
-                } catch (e) {
-                    resolve({ success: false, error: "Invalid response from Google AI API" });
-                }
-            });
-        });
-
-        req.on('error', (err) => resolve({ success: false, error: err.message }));
-        req.write(postData);
-        req.end();
-    });
+        const reply = chatCompletion.choices[0]?.message?.content || "OK";
+        return { success: true, reply: reply.trim() };
+    } catch (err) {
+        return { success: false, error: err.message };
+    }
 }
 
 // ==========================================
 // 🤖 AI Test & Verification Endpoints
 // ==========================================
-const handleGeminiTest = async (req, res) => {
+const handleGroqTest = async (req, res) => {
     const apiKey = req.body.apiKey || req.body.api_key || req.body.key || req.query.apiKey;
 
-    if (!apiKey) {
-        return res.status(400).json({ success: false, message: "API Key jaruri hai!" });
-    }
-
     try {
-        const result = await callGemini36Flash(apiKey.trim(), "Reply 'OK' in one word to test connection.");
+        const result = await callGroqAPI(apiKey ? apiKey.trim() : null, "Reply 'OK' in one word to test connection.");
         if (result.success) {
             return res.json({ 
                 success: true, 
-                message: "Gemini 3.6 Flash Connection Successful! ✅", 
+                message: "Groq Connection Successful! ✅", 
                 reply: result.reply 
             });
         } else {
@@ -112,23 +89,23 @@ const handleGeminiTest = async (req, res) => {
     }
 };
 
-app.post('/api/ai/test', handleGeminiTest);
-app.post('/api/ai/test-key', handleGeminiTest);
-app.post('/api/gemini/test', handleGeminiTest);
-app.post('/api/test-key', handleGeminiTest);
-app.get('/api/ai/test', handleGeminiTest);
+app.post('/api/ai/test', handleGroqTest);
+app.post('/api/ai/test-key', handleGroqTest);
+app.post('/api/gemini/test', handleGroqTest);
+app.post('/api/test-key', handleGroqTest);
+app.get('/api/ai/test', handleGroqTest);
 
 // WhatsApp Auto-Reply Chat Route
 app.post('/api/ai/chat', async (req, res) => {
     const { apiKey, message, prompt } = req.body;
     const finalPrompt = message || prompt;
 
-    if (!apiKey || !finalPrompt) {
-        return res.status(400).json({ success: false, message: "API Key aur message dono anivarya hain." });
+    if (!finalPrompt) {
+        return res.status(400).json({ success: false, message: "Message anivarya hai." });
     }
 
     try {
-        const result = await callGemini36Flash(apiKey.trim(), finalPrompt);
+        const result = await callGroqAPI(apiKey ? apiKey.trim() : null, finalPrompt);
         if (result.success) {
             res.json({ success: true, reply: result.reply });
         } else {
@@ -208,6 +185,7 @@ const handlePaymentSubmit = (req, res) => {
 
 app.post('/api/payment/submit-utr', handlePaymentSubmit);
 app.post('/api/payment/submit', handlePaymentSubmit);
+
 // ==========================================
 // 🔔 Make.com / PhonePe Webhook Receiver
 // ==========================================
@@ -243,6 +221,7 @@ app.post('/webhook', (req, res) => {
         payment: autoPayment
     });
 });
+
 // ==========================================
 // 🔍 Payment Status Check
 // ==========================================
@@ -304,7 +283,7 @@ app.get('/api/admin/payments', (req, res) => {
 });
 
 // ==========================================
-// 📊 Beautiful Web Admin Dashboard
+// 📊 Web Admin Dashboard
 // ==========================================
 app.get('/admin', (req, res) => {
     const payments = getPayments().reverse();
@@ -410,3 +389,4 @@ app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
     console.log(`🌐 Admin Panel: http://localhost:${PORT}/admin`);
 });
+            
