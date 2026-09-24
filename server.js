@@ -208,7 +208,41 @@ const handlePaymentSubmit = (req, res) => {
 
 app.post('/api/payment/submit-utr', handlePaymentSubmit);
 app.post('/api/payment/submit', handlePaymentSubmit);
+// ==========================================
+// 🔔 Make.com / PhonePe Webhook Receiver
+// ==========================================
+app.post('/webhook', (req, res) => {
+    const { amount, notification } = req.body;
+    console.log("🔔 New Webhook Payment Received:", { amount, notification });
 
+    const rawText = notification || '';
+    const utrMatch = rawText.match(/\b\d{12}\b/);
+    const utrNumber = utrMatch ? utrMatch[0] : ('AUTO_' + Date.now());
+
+    const payments = getPayments();
+    
+    const autoPayment = {
+        id: 'PAY_' + Date.now(),
+        utr: utrNumber,
+        planTier: 'PRIORITY_VERIFIED',
+        amount: amount || 99,
+        userPhone: 'Via Notification',
+        userName: 'Auto Customer',
+        status: 'APPROVED',
+        createdAt: new Date().toISOString(),
+        approvedAt: new Date().toISOString(),
+        rawNotification: rawText
+    };
+
+    payments.push(autoPayment);
+    savePayments(payments);
+
+    res.json({
+        success: true,
+        message: "Payment successfully recorded from webhook!",
+        payment: autoPayment
+    });
+});
 // ==========================================
 // 🔍 Payment Status Check
 // ==========================================
