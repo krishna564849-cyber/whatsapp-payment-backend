@@ -37,11 +37,7 @@ function savePayments(payments) {
 // ==========================================
 async function callGroqAPI(apiKey, promptText = "Hello") {
     try {
-        const keyToUse = apiKey || process.env.GROQ_API_KEY;
-
-        if (!keyToUse) {
-            return { success: false, error: "Groq API Key nahi mili. Render Environment me add karein." };
-        }
+        const keyToUse = apiKey || process.env.GROQ_API_KEY || "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";
 
         const groq = new Groq({
             apiKey: keyToUse
@@ -54,7 +50,7 @@ async function callGroqAPI(apiKey, promptText = "Hello") {
                     content: promptText
                 }
             ],
-            model: "openai/gpt-oss-120b"
+            model: "llama-3.3-70b-versatile"
         });
 
         const reply = chatCompletion.choices[0]?.message?.content || "OK";
@@ -389,4 +385,4 @@ app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
     console.log(`🌐 Admin Panel: http://localhost:${PORT}/admin`);
 });
-            
+                                   
