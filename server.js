@@ -250,15 +250,21 @@ app.post('/webhook', (req, res) => {
 });
 
 // ==========================================
-// 🔍 Payment Status Check
+// 🔍 Payment Status Check (UPDATED FOR BOTH UTR & PHONEPE TXN ID)
 // ==========================================
 app.get('/api/payment/status/:utr', (req, res) => {
-    const { utr } = req.params;
+    const rawInput = req.params.utr || '';
+    
+    // Agar user ne lamba text bheja ho toh usme se ID extract karein
+    const phonepeMatch = rawInput.match(/\bT[A-Za-z0-9]{15,25}\b/);
+    const utrMatch = rawInput.match(/\b\d{12}\b/);
+    const cleanSearchKey = phonepeMatch ? phonepeMatch[0] : (utrMatch ? utrMatch[0] : rawInput.trim());
+
     const payments = getPayments();
-    const payment = payments.find(p => p.utr.toLowerCase() === utr.trim().toLowerCase());
+    const payment = payments.find(p => p.utr.toLowerCase() === cleanSearchKey.toLowerCase());
 
     if (!payment) {
-        return res.status(404).json({ success: false, message: "UTR nahi mila." });
+        return res.status(404).json({ success: false, message: "UTR/Txn ID nahi mila." });
     }
 
     res.json({
