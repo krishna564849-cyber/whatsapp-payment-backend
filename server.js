@@ -183,25 +183,56 @@ app.post('/api/payment/submit-utr', handlePaymentSubmit);
 app.post('/api/payment/submit', handlePaymentSubmit);
 
 // ==========================================
-// 🔔 Make.com / PhonePe Webhook Receiver
+// 🔔 PhonePe / MacroDroid Webhook Receiver (UPDATED)
 // ==========================================
 app.post('/webhook', (req, res) => {
     const { amount, notification } = req.body;
-    console.log("🔔 New Webhook Payment Received:", { amount, notification });
-
     const rawText = notification || '';
-    const utrMatch = rawText.match(/\b\d{12}\b/);
-    const utrNumber = utrMatch ? utrMatch[0] : ('AUTO_' + Date.now());
+
+    // 1. PhonePe Txn ID (T se shuru hone wala ID) nikaalne ke liye
+    const phonepeTxnMatch = rawText.match(/\bT[A-Za-z0-9]{15,25}\b/);
+
+    // 2. 12-digit standard Bank UTR nikaalne ke liye
+    const standardUtrMatch = rawText.match(/\b\d{12}\b/);
+
+    // Final Reference / UTR ID
+    const detectedTxnId = phonepeTxnMatch 
+        ? phonepeTxnMatch[0] 
+        : (standardUtrMatch ? standardUtrMatch[0] : ('AUTO_' + Date.now()));
+
+    // 3. Sender ka naam nikaalein ("from [Name] via PhonePe")
+    const senderMatch = rawText.match(/from\s+([A-Za-z\s]+?)\s+via/i);
+    const customerName = senderMatch ? senderMatch[1].trim() : 'PhonePe User';
+
+    // 4. Amount ko sanitize karein
+    const finalAmount = amount || (rawText.match(/Rs\s*(\d+(\.\d+)?)/i)?.[1] || 99);
+
+    console.log("🔔 New Webhook Payment Received:", {
+        amount: finalAmount,
+        transactionId: detectedTxnId,
+        customerName: customerName,
+        rawNotification: rawText
+    });
 
     const payments = getPayments();
-    
+
+    // Duplicate check
+    const existing = payments.find(p => p.utr.toLowerCase() === detectedTxnId.toLowerCase());
+    if (existing) {
+        return res.json({
+            success: true,
+            message: "Duplicate payment webhook received, already recorded.",
+            payment: existing
+        });
+    }
+
     const autoPayment = {
         id: 'PAY_' + Date.now(),
-        utr: utrNumber,
+        utr: detectedTxnId,
         planTier: 'PRIORITY_VERIFIED',
-        amount: amount || 99,
+        amount: finalAmount,
         userPhone: 'Via Notification',
-        userName: 'Auto Customer',
+        userName: customerName,
         status: 'APPROVED',
         createdAt: new Date().toISOString(),
         approvedAt: new Date().toISOString(),
@@ -339,7 +370,7 @@ app.get('/admin', (req, res) => {
             <table>
                 <thead>
                     <tr>
-                        <th>UTR Number</th>
+                        <th>UTR / Txn ID</th>
                         <th>User Details</th>
                         <th>Plan & Amount</th>
                         <th>Date & Time</th>
@@ -385,4 +416,3 @@ app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
     console.log(`🌐 Admin Panel: http://localhost:${PORT}/admin`);
 });
-                                   
